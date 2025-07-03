@@ -1,0 +1,28 @@
+{
+    "family": "coinback-api-task",
+    "taskRoleArn": "arn:aws:iam::788741120594:role/ECSCoinbackTaskRole",
+    "executionRoleArn": "arn:aws:iam::788741120594:role/ECSTaskExecutionRole",
+    "networkMode": "awsvpc",
+    "containerDefinitions": [
+        {
+            "name": "coinback-api",
+            "image": "788741120594.dkr.ecr.us-east-1.amazonaws.com/coinback-backend-api:latest",
+            "portMappings": [ { "containerPort": 3001, "hostPort": 3001, "protocol": "tcp" } ],
+            "essential": true,
+            "logConfiguration": { "logDriver": "awslogs", "options": { "awslogs-group": "/ecs/coinback-api-task", "awslogs-region": "us-east-1", "awslogs-stream-prefix": "ecs" } },
+            "secrets": [
+                { "name": "DB_HOST", "valueFrom": "arn:aws:secretsmanager:us-east-1:788741120594:secret:prod/coinback/database:DB_HOST::" },
+                { "name": "DB_USER", "valueFrom": "arn:aws:secretsmanager:us-east-1:788741120594:secret:prod/coinback/database:DB_USER::" },
+                { "name": "DB_PASSWORD", "valueFrom": "arn:aws:secretsmanager:us-east-1:788741120594:secret:prod/coinback/database:DB_PASSWORD::" },
+                { "name": "DB_NAME", "valueFrom": "arn:aws:secretsmanager:us-east-1:788741120594:secret:prod/coinback/database:DB_NAME::" },
+                { "name": "JWT_SECRET", "valueFrom": "arn:aws:secretsmanager:us-east-1:788741120594:secret:prod/coinback/jwt" },
+                { "name": "FLASHBOTS_AUTH_KEY", "valueFrom": "arn:aws:secretsmanager:us-east-1:788741120594:secret:prod/coinback/flashbots" },
+                { "name": "ETHEREUM_RPC_URL", "valueFrom": "arn:aws:secretsmanager:us-east-1:788741120594:secret:prod/coinback/rpc" }
+            ],
+            "environment": [ { "name": "NODE_ENV", "value": "production" }, { "name": "CBK_TOKEN_ADDRESS", "value": "0x1228be2b264d70a92cc313f9a71d8e9ac10864f8" } ]
+        }
+    ],
+    "requiresCompatibilities": [ "FARGATE" ],
+    "cpu": "512",
+    "memory": "1024"
+}

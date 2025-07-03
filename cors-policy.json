@@ -1,0 +1,12 @@
+{
+  "OriginRequestPolicyConfig": {
+    "Comment": "Forwards Origin, Host, and Authorization headers for CORS, vhost, and auth",
+    "Name": "CORS-and-Host-Policy-v2",
+    "HeadersConfig": {
+      "HeaderBehavior": "whitelist",
+      "Headers": {"Items": ["Origin", "Host", "Authorization"]}
+    },
+    "CookiesConfig": {"CookieBehavior": "none"},
+    "QueryStringsConfig": {"QueryStringBehavior": "none"}
+  }
+}
