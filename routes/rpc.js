@@ -66,12 +66,15 @@ try {
             const userRes = await db.query('SELECT user_id FROM Users WHERE wallet_address = $1', [walletAddress.toLowerCase()]);
             return userRes.rows.length > 0 ? userRes.rows[0].user_id : null;
         } catch (dbError) {
+            console.error("Error getting user ID from wallet address:", dbError);
             return null;
         }
       };
 
       fastify.post('/', async (request, reply) => {
         const { method, params, id, jsonrpc = "2.0" } = request.body;
+        console.log(`Forwarding RPC method: ${method}`);
+        
         switch (method) {
           case 'eth_sendTransaction':
             return reply.code(405).send({
@@ -82,6 +85,7 @@ try {
                 message: `The 'eth_sendTransaction' method is not supported. Please sign the transaction locally and use 'eth_sendRawTransaction'.`,
               },
             });
+            
           case 'eth_sendRawTransaction':
             const rawTx = params && params[0];
             if (typeof rawTx !== 'string' || !rawTx.startsWith('0x')) {
@@ -90,65 +94,150 @@ try {
             if (!mevShareClient) {
               return reply.code(503).send({ jsonrpc, id, error: { code: -32001, message: 'MEV protection service is currently unavailable.' } });
             }
+            
             try {
+              // Decode the transaction to get its details
               const decodedTx = ethers.Transaction.from(rawTx);
               const senderAddress = decodedTx.from;
+              const txHash = decodedTx.hash;
               const userId = await getUserIdFromWalletAddress(senderAddress);
               
-              // Update sendTransaction method signature to match the library's expected format
-              const flashbotsResponse = await mevShareClient.sendTransaction(rawTx, { 
-                hints: {
-                  calldata: true,
-                  logs: true,
-                  contract_address: true,
-                  function_selector: true,
-                  hash: true
-                }
-              });
+              console.log(`Processing transaction from ${senderAddress}, hash: ${txHash}`);
               
-              if (userId) {
-                  try {
-                      // Fix: Use the actual transaction hash instead of the flashbotsResponse as client_tx_hash
-                      const txHash = decodedTx.hash;
-                      console.log(`Transaction hash: ${txHash}, FlashbotsResponse: ${flashbotsResponse}`);
-                      
-                      // Check if this transaction has already been recorded
-                      const existingTx = await db.query(
-                          'SELECT transaction_pk FROM Transactions WHERE client_tx_hash = $1',
-                          [txHash]
-                      );
-                      
-                      if (existingTx.rows.length === 0) {
-                          // Only insert if the transaction doesn't already exist
-                          await db.query(
-                              'INSERT INTO Transactions (user_id, client_tx_hash, raw_transaction, forwarded_to_relay_at, relay_name, final_status) VALUES ($1, $2, $3, NOW(), $4, $5)',
-                              [userId, txHash, rawTx, 'FlashbotsMEVShare', 'submitted_to_relay']
-                          );
-                          console.log(`Transaction recorded in database with hash: ${txHash}`);
-                      } else {
-                          console.log(`Transaction with hash ${txHash} already exists in database, skipping insert`);
+              // Check if this transaction has already been recorded
+              let existingTx = null;
+              try {
+                  existingTx = await db.query(
+                      'SELECT transaction_pk, final_status FROM Transactions WHERE client_tx_hash = $1',
+                      [txHash]
+                  );
+              } catch (dbError) {
+                  console.error("Error checking for existing transaction:", dbError);
+                  // Continue even if DB query fails
+              }
+              
+              // If transaction exists and was already sent to relay, return the original tx hash
+              if (existingTx && existingTx.rows.length > 0) {
+                  console.log(`Transaction ${txHash} already exists in database with status: ${existingTx.rows[0].final_status}`);
+                  return reply.send({ jsonrpc, id, result: txHash });
+              }
+              
+              // If it doesn't exist or wasn't successfully sent, proceed with sending it
+              try {
+                  // Send transaction to Flashbots
+                  const flashbotsResponse = await mevShareClient.sendTransaction(rawTx, { 
+                      hints: {
+                          calldata: true,
+                          logs: true,
+                          contract_address: true,
+                          function_selector: true,
+                          hash: true
                       }
-                  } catch (dbError) {
-                      console.error("Database error in transaction recording:", dbError);
-                      // Continue even if DB insert fails - don't block the transaction submission
+                  });
+                  console.log(`Transaction ${txHash} sent to Flashbots, response: ${flashbotsResponse}`);
+                  
+                  // Record in database only if we have a user ID
+                  if (userId) {
+                      try {
+                          // If the transaction doesn't exist, insert it
+                          if (!existingTx || existingTx.rows.length === 0) {
+                              await db.query(
+                                  'INSERT INTO Transactions (user_id, client_tx_hash, raw_transaction, forwarded_to_relay_at, relay_name, final_status) VALUES ($1, $2, $3, NOW(), $4, $5)',
+                                  [userId, txHash, rawTx, 'FlashbotsMEVShare', 'submitted_to_relay']
+                              );
+                              console.log(`Transaction recorded in database with hash: ${txHash}`);
+                          } else {
+                              // If it exists but failed previously, update its status
+                              await db.query(
+                                  'UPDATE Transactions SET forwarded_to_relay_at = NOW(), final_status = $1 WHERE client_tx_hash = $2',
+                                  ['submitted_to_relay', txHash]
+                              );
+                              console.log(`Transaction ${txHash} status updated in database`);
+                          }
+                      } catch (dbError) {
+                          // Check specifically for duplicate key error
+                          if (dbError.code === '23505') {
+                              console.log(`Duplicate transaction ${txHash} detected, continuing`);
+                          } else {
+                              console.error("Database error in transaction recording:", dbError);
+                          }
+                          // Continue even if DB insert fails - don't block the transaction submission
+                      }
+                  }
+                  return reply.send({ jsonrpc, id, result: txHash });
+              } catch (flashbotsError) {
+                  console.error("Error sending transaction to Flashbots:", flashbotsError);
+                  // Try with regular provider as fallback
+                  try {
+                      const result = await publicProvider.send(method, params);
+                      console.log(`Transaction ${txHash} sent via regular provider after Flashbots failure`);
+                      return reply.send({ jsonrpc, id, result });
+                  } catch (providerError) {
+                      console.error("Error sending transaction via regular provider:", providerError);
+                      return reply.code(500).send({ 
+                          jsonrpc, 
+                          id, 
+                          error: { 
+                              code: -32000, 
+                              message: `Transaction failed: ${providerError.message || flashbotsError.message}` 
+                          } 
+                      });
                   }
               }
-              return reply.send({ jsonrpc, id, result: flashbotsResponse });
             } catch (error) {
               console.error("Error in eth_sendRawTransaction:", error);
               return reply.code(500).send({ jsonrpc, id, error: { code: -32000, message: `Internal error: ${error.message}` } });
             }
-          default:
+            
+          case 'eth_call':
+            // Special handling for eth_call to properly handle contract revert errors
             try {
                 if (!publicProvider) {
-                     return reply.code(503).send({ jsonrpc, id, error: { code: -32002, message: 'Read-only service is currently unavailable.' } });
+                    return reply.code(503).send({ jsonrpc, id, error: { code: -32002, message: 'Read-only service is currently unavailable.' } });
                 }
-                console.log(`Forwarding RPC method: ${method}`);
+                
                 const result = await publicProvider.send(method, params);
                 return reply.send({ jsonrpc, id, result });
             } catch (error) {
                 console.error(`Error in ${method}:`, error);
-                return reply.code(500).send({ jsonrpc, id, error: { code: -32000, message: `Error processing ${method}: ${error.message}` } });
+                
+                // For eth_call, pass through the original error with proper RPC error formatting
+                // This is critical for contract interaction to work properly
+                const errorResponse = {
+                    jsonrpc,
+                    id,
+                    error: {
+                        code: -32000,
+                        message: error.message || "Unknown error",
+                        data: error.info || error.data || null
+                    }
+                };
+                
+                // Instead of returning 500, return 200 with the error in the expected JSON-RPC format
+                // This allows the client to properly handle contract reverts
+                return reply.send(errorResponse);
+            }
+            
+          default:
+            try {
+                if (!publicProvider) {
+                    return reply.code(503).send({ jsonrpc, id, error: { code: -32002, message: 'Read-only service is currently unavailable.' } });
+                }
+                
+                const result = await publicProvider.send(method, params);
+                return reply.send({ jsonrpc, id, result });
+            } catch (error) {
+                console.error(`Error in ${method}:`, error);
+                
+                // For other methods, also use JSON-RPC error format but with less detail
+                return reply.send({ 
+                    jsonrpc, 
+                    id, 
+                    error: { 
+                        code: -32000, 
+                        message: `Error processing ${method}: ${error.message}` 
+                    } 
+                });
             }
         }
       });
