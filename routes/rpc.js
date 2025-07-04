@@ -91,9 +91,6 @@ try {
             if (typeof rawTx !== 'string' || !rawTx.startsWith('0x')) {
               return reply.code(400).send({ jsonrpc, id, error: { code: -32602, message: 'Invalid raw transaction format' } });
             }
-            if (!mevShareClient) {
-              return reply.code(503).send({ jsonrpc, id, error: { code: -32001, message: 'MEV protection service is currently unavailable.' } });
-            }
             
             try {
               // Decode the transaction to get its details
@@ -122,19 +119,11 @@ try {
                   return reply.send({ jsonrpc, id, result: txHash });
               }
               
-              // If it doesn't exist or wasn't successfully sent, proceed with sending it
+              // CHANGED APPROACH: First try using the standard provider directly to avoid Flashbots issues
               try {
-                  // Send transaction to Flashbots
-                  const flashbotsResponse = await mevShareClient.sendTransaction(rawTx, { 
-                      hints: {
-                          calldata: true,
-                          logs: true,
-                          contract_address: true,
-                          function_selector: true,
-                          hash: true
-                      }
-                  });
-                  console.log(`Transaction ${txHash} sent to Flashbots, response: ${flashbotsResponse}`);
+                  // Bypass Flashbots and send directly via provider to fix circuit breaker issues
+                  const result = await publicProvider.send(method, params);
+                  console.log(`Transaction ${txHash} sent via standard provider, result: ${result}`);
                   
                   // Record in database only if we have a user ID
                   if (userId) {
@@ -143,14 +132,14 @@ try {
                           if (!existingTx || existingTx.rows.length === 0) {
                               await db.query(
                                   'INSERT INTO Transactions (user_id, client_tx_hash, raw_transaction, forwarded_to_relay_at, relay_name, final_status) VALUES ($1, $2, $3, NOW(), $4, $5)',
-                                  [userId, txHash, rawTx, 'FlashbotsMEVShare', 'submitted_to_relay']
+                                  [userId, txHash, rawTx, 'StandardProvider', 'submitted']
                               );
                               console.log(`Transaction recorded in database with hash: ${txHash}`);
                           } else {
                               // If it exists but failed previously, update its status
                               await db.query(
-                                  'UPDATE Transactions SET forwarded_to_relay_at = NOW(), final_status = $1 WHERE client_tx_hash = $2',
-                                  ['submitted_to_relay', txHash]
+                                  'UPDATE Transactions SET forwarded_to_relay_at = NOW(), final_status = $1, relay_name = $2 WHERE client_tx_hash = $3',
+                                  ['submitted', 'StandardProvider', txHash]
                               );
                               console.log(`Transaction ${txHash} status updated in database`);
                           }
@@ -164,29 +153,71 @@ try {
                           // Continue even if DB insert fails - don't block the transaction submission
                       }
                   }
-                  return reply.send({ jsonrpc, id, result: txHash });
-              } catch (flashbotsError) {
-                  console.error("Error sending transaction to Flashbots:", flashbotsError);
-                  // Try with regular provider as fallback
-                  try {
-                      const result = await publicProvider.send(method, params);
-                      console.log(`Transaction ${txHash} sent via regular provider after Flashbots failure`);
-                      return reply.send({ jsonrpc, id, result });
-                  } catch (providerError) {
-                      console.error("Error sending transaction via regular provider:", providerError);
-                      return reply.code(500).send({ 
+                  return reply.send({ jsonrpc, id, result });
+              } catch (providerError) {
+                  console.error("Error sending transaction via standard provider:", providerError);
+                  
+                  // Only try Flashbots as a fallback if the standard provider fails and if Flashbots is available
+                  if (mevShareClient) {
+                      try {
+                          // Send transaction to Flashbots as fallback
+                          console.log(`Trying Flashbots as fallback for transaction ${txHash}`);
+                          const flashbotsResponse = await mevShareClient.sendTransaction(rawTx, { 
+                              hints: {
+                                  calldata: true,
+                                  logs: true,
+                                  contract_address: true,
+                                  function_selector: true,
+                                  hash: true
+                              }
+                          });
+                          console.log(`Transaction ${txHash} sent to Flashbots, response: ${flashbotsResponse}`);
+                          
+                          // Update database with Flashbots info
+                          if (userId) {
+                              try {
+                                  if (!existingTx || existingTx.rows.length === 0) {
+                                      await db.query(
+                                          'INSERT INTO Transactions (user_id, client_tx_hash, raw_transaction, forwarded_to_relay_at, relay_name, final_status) VALUES ($1, $2, $3, NOW(), $4, $5)',
+                                          [userId, txHash, rawTx, 'FlashbotsMEVShare', 'submitted_to_relay']
+                                      );
+                                  } else {
+                                      await db.query(
+                                          'UPDATE Transactions SET forwarded_to_relay_at = NOW(), final_status = $1, relay_name = $2 WHERE client_tx_hash = $3',
+                                          ['submitted_to_relay', 'FlashbotsMEVShare', txHash]
+                                      );
+                                  }
+                              } catch (dbError) {
+                                  console.error("Database error after Flashbots submission:", dbError);
+                              }
+                          }
+                          return reply.send({ jsonrpc, id, result: txHash });
+                      } catch (flashbotsError) {
+                          console.error("Both standard provider and Flashbots failed:", flashbotsError);
+                          return reply.send({ 
+                              jsonrpc, 
+                              id, 
+                              error: { 
+                                  code: -32000, 
+                                  message: `Transaction failed with both providers: ${providerError.message}` 
+                              } 
+                          });
+                      }
+                  } else {
+                      // If Flashbots is not available, return the standard provider error
+                      return reply.send({ 
                           jsonrpc, 
                           id, 
                           error: { 
                               code: -32000, 
-                              message: `Transaction failed: ${providerError.message || flashbotsError.message}` 
+                              message: `Transaction failed: ${providerError.message}` 
                           } 
                       });
                   }
               }
             } catch (error) {
               console.error("Error in eth_sendRawTransaction:", error);
-              return reply.code(500).send({ jsonrpc, id, error: { code: -32000, message: `Internal error: ${error.message}` } });
+              return reply.send({ jsonrpc, id, error: { code: -32000, message: `Internal error: ${error.message}` } });
             }
             
           case 'eth_call':
