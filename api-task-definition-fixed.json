@@ -19,7 +19,7 @@
                 { "name": "FLASHBOTS_AUTH_KEY", "valueFrom": "arn:aws:secretsmanager:us-east-1:788741120594:secret:prod/coinback/flashbots" },
                 { "name": "ETHEREUM_RPC_URL", "valueFrom": "arn:aws:secretsmanager:us-east-1:788741120594:secret:prod/coinback/rpc" }
             ],
-            "environment": [ { "name": "NODE_ENV", "value": "production" }, { "name": "CBK_TOKEN_ADDRESS", "value": "0x1228be2b264d70a92cc313f9a71d8e9ac10864f8" } ]
+            "environment": [ { "name": "NODE_ENV", "value": "production" }, { "name": "CBK_TOKEN_ADDRESS", "value": "0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8" } ]
         }
     ],
     "requiresCompatibilities": [ "FARGATE" ],

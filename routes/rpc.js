@@ -99,7 +99,7 @@ try {
               const txHash = decodedTx.hash;
               const userId = await getUserIdFromWalletAddress(senderAddress);
               
-              console.log(`Processing transaction from ${senderAddress}, hash: ${txHash}`);
+              console.log(`Processing transaction from ${senderAddress}, hash: ${txHash}, data: ${decodedTx.data ? decodedTx.data.substring(0, 20) + '...' : 'empty'}`);
               
               // Check if this transaction has already been recorded
               let existingTx = null;
@@ -121,6 +121,9 @@ try {
               
               // CHANGED APPROACH: First try using the standard provider directly to avoid Flashbots issues
               try {
+                  // Add more detailed logging
+                  console.log(`Sending transaction ${txHash} via standard provider. Gas price: ${decodedTx.gasPrice?.toString() || 'auto'}, gas limit: ${decodedTx.gasLimit?.toString() || 'auto'}`);
+                  
                   // Bypass Flashbots and send directly via provider to fix circuit breaker issues
                   const result = await publicProvider.send(method, params);
                   console.log(`Transaction ${txHash} sent via standard provider, result: ${result}`);

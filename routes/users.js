@@ -121,14 +121,24 @@ export default async function userRoutes(fastify, options) {
           throw new Error("Backend is missing critical RPC or Token Address configuration.");
         }
         const provider = new ethers.JsonRpcProvider(process.env.ETHEREUM_RPC_URL);
-        const cbkTokenContract = new ethers.Contract(process.env.CBK_TOKEN_ADDRESS, ['function balanceOf(address) view returns (uint256)'], provider);
+        const cbkTokenContract = new ethers.Contract(process.env.CBK_TOKEN_ADDRESS, [
+          'function balanceOf(address) view returns (uint256)',
+          'function decimals() view returns (uint8)'
+        ], provider);
+        
+        // Get token decimals and balance
+        const decimals = await cbkTokenContract.decimals();
         const cbkBalance = await cbkTokenContract.balanceOf(profileData.wallet_address);
 
-        profileData.cbk_balance = cbkBalance.toString(); // Add the LIVE balance
-        request.log.info({ cbk_balance: profileData.cbk_balance }, '✅ PROFILE: CBK balance fetched successfully.');
+        // Convert to string using proper decimals 
+        profileData.cbk_balance = cbkBalance.toString();
+        profileData.cbk_decimals = decimals;
+        
+        request.log.info({ cbk_balance: profileData.cbk_balance, decimals: profileData.cbk_decimals }, '✅ PROFILE: CBK balance fetched successfully.');
       } catch (chainError) {
         request.log.error({ msg: "❌ PROFILE_CHAIN_ERROR: Could not fetch wallet balance.", error: { message: chainError.message, stack: chainError.stack } });
         profileData.cbk_balance = '0'; // Default to 0 on failure
+        profileData.cbk_decimals = 6;  // Default to 6 decimals for USDC
       }
       // *** END OF THE ONLY LOGICAL FIX ***
 
@@ -137,6 +147,7 @@ export default async function userRoutes(fastify, options) {
         wallet_address: profileData.wallet_address,
         created_at: profileData.created_at,
         cbk_balance: profileData.cbk_balance, // Now sending the live value
+        cbk_decimals: profileData.cbk_decimals, // Send decimals to the frontend
         staked_cbk: profileData.staked_cbk, // Value from the now-existing `stakes` table
         total_rewards_earned: profileData.total_rewards_earned // Value from the now-existing `rewards` table
       });

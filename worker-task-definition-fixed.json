@@ -10,13 +10,9 @@
             "essential": true,
             "logConfiguration": { "logDriver": "awslogs", "options": { "awslogs-group": "/ecs/coinback-worker-task", "awslogs-region": "us-east-1", "awslogs-stream-prefix": "ecs" } },
             "secrets": [
-                { "name": "ETHEREUM_RPC_URL", "valueFrom": "arn:aws:secretsmanager:us-east-1:788741120594:secret:prod/coinback/rpc" },
-                { "name": "DB_HOST", "valueFrom": "arn:aws:secretsmanager:us-east-1:788741120594:secret:prod/coinback/database:DB_HOST::" },
-                { "name": "DB_USER", "valueFrom": "arn:aws:secretsmanager:us-east-1:788741120594:secret:prod/coinback/database:DB_USER::" },
-                { "name": "DB_PASSWORD", "valueFrom": "arn:aws:secretsmanager:us-east-1:788741120594:secret:prod/coinback/database:DB_PASSWORD::" },
-                { "name": "DB_NAME", "valueFrom": "arn:aws:secretsmanager:us-east-1:788741120594:secret:prod/coinback/database:DB_NAME::" }
+                { "name": "DATABASE_URL", "valueFrom": "arn:aws:secretsmanager:us-east-1:788741120594:secret:prod/coinback/database_url" }, { "name": "FLASHBOTS_AUTH_KEY", "valueFrom": "arn:aws:secretsmanager:us-east-1:788741120594:secret:prod/coinback/flashbots_auth_key" }, { "name": "ETHEREUM_RPC_URL", "valueFrom": "arn:aws:secretsmanager:us-east-1:788741120594:secret:prod/coinback/rpc" }, { "name": "JWT_SECRET", "valueFrom": "arn:aws:secretsmanager:us-east-1:788741120594:secret:prod/coinback/jwt" }
             ],
-            "environment": [ { "name": "NODE_ENV", "value": "production" }, { "name": "REWARD_TOKEN_ADDRESS", "value": "0x439881ef4d11dd5156fa76ef62c36e882229901c" }, { "name": "CBK_TOKEN_ADDRESS", "value": "0x1228be2b264d70a92cc313f9a71d8e9ac10864f8" } ]
+            "environment": [ { "name": "NODE_ENV", "value": "production" }, { "name": "CBK_TOKEN_ADDRESS", "value": "0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8" } ]
         }
     ],
     "requiresCompatibilities": [ "FARGATE" ],
