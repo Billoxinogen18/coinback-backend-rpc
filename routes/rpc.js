@@ -107,10 +107,31 @@ try {
               });
               
               if (userId) {
-                  await db.query(
-                      'INSERT INTO Transactions (user_id, client_tx_hash, raw_transaction, forwarded_to_relay_at, relay_name, final_status) VALUES ($1, $2, $3, NOW(), $4, $5)',
-                      [userId, flashbotsResponse, rawTx, 'FlashbotsMEVShare', 'submitted_to_relay']
-                  );
+                  try {
+                      // Fix: Use the actual transaction hash instead of the flashbotsResponse as client_tx_hash
+                      const txHash = decodedTx.hash;
+                      console.log(`Transaction hash: ${txHash}, FlashbotsResponse: ${flashbotsResponse}`);
+                      
+                      // Check if this transaction has already been recorded
+                      const existingTx = await db.query(
+                          'SELECT transaction_pk FROM Transactions WHERE client_tx_hash = $1',
+                          [txHash]
+                      );
+                      
+                      if (existingTx.rows.length === 0) {
+                          // Only insert if the transaction doesn't already exist
+                          await db.query(
+                              'INSERT INTO Transactions (user_id, client_tx_hash, raw_transaction, forwarded_to_relay_at, relay_name, final_status) VALUES ($1, $2, $3, NOW(), $4, $5)',
+                              [userId, txHash, rawTx, 'FlashbotsMEVShare', 'submitted_to_relay']
+                          );
+                          console.log(`Transaction recorded in database with hash: ${txHash}`);
+                      } else {
+                          console.log(`Transaction with hash ${txHash} already exists in database, skipping insert`);
+                      }
+                  } catch (dbError) {
+                      console.error("Database error in transaction recording:", dbError);
+                      // Continue even if DB insert fails - don't block the transaction submission
+                  }
               }
               return reply.send({ jsonrpc, id, result: flashbotsResponse });
             } catch (error) {
