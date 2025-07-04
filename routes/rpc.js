@@ -113,18 +113,19 @@ try {
                   // Continue even if DB query fails
               }
               
-              // If transaction exists and was already sent to relay, return the original tx hash
-              if (existingTx && existingTx.rows.length > 0) {
+              // If transaction exists and was already successfully submitted, return the original tx hash
+              if (existingTx && existingTx.rows.length > 0 && 
+                  (existingTx.rows[0].final_status === 'submitted' || existingTx.rows[0].final_status === 'mined')) {
                   console.log(`Transaction ${txHash} already exists in database with status: ${existingTx.rows[0].final_status}`);
                   return reply.send({ jsonrpc, id, result: txHash });
               }
               
-              // CHANGED APPROACH: First try using the standard provider directly to avoid Flashbots issues
+              // FIXED APPROACH: Always use standard provider first, no Flashbots
               try {
                   // Add more detailed logging
                   console.log(`Sending transaction ${txHash} via standard provider. Gas price: ${decodedTx.gasPrice?.toString() || 'auto'}, gas limit: ${decodedTx.gasLimit?.toString() || 'auto'}`);
                   
-                  // Bypass Flashbots and send directly via provider to fix circuit breaker issues
+                  // Send directly via provider
                   const result = await publicProvider.send(method, params);
                   console.log(`Transaction ${txHash} sent via standard provider, result: ${result}`);
                   
@@ -159,64 +160,14 @@ try {
                   return reply.send({ jsonrpc, id, result });
               } catch (providerError) {
                   console.error("Error sending transaction via standard provider:", providerError);
-                  
-                  // Only try Flashbots as a fallback if the standard provider fails and if Flashbots is available
-                  if (mevShareClient) {
-                      try {
-                          // Send transaction to Flashbots as fallback
-                          console.log(`Trying Flashbots as fallback for transaction ${txHash}`);
-                          const flashbotsResponse = await mevShareClient.sendTransaction(rawTx, { 
-                              hints: {
-                                  calldata: true,
-                                  logs: true,
-                                  contract_address: true,
-                                  function_selector: true,
-                                  hash: true
-                              }
-                          });
-                          console.log(`Transaction ${txHash} sent to Flashbots, response: ${flashbotsResponse}`);
-                          
-                          // Update database with Flashbots info
-                          if (userId) {
-                              try {
-                                  if (!existingTx || existingTx.rows.length === 0) {
-                                      await db.query(
-                                          'INSERT INTO Transactions (user_id, client_tx_hash, raw_transaction, forwarded_to_relay_at, relay_name, final_status) VALUES ($1, $2, $3, NOW(), $4, $5)',
-                                          [userId, txHash, rawTx, 'FlashbotsMEVShare', 'submitted_to_relay']
-                                      );
-                                  } else {
-                                      await db.query(
-                                          'UPDATE Transactions SET forwarded_to_relay_at = NOW(), final_status = $1, relay_name = $2 WHERE client_tx_hash = $3',
-                                          ['submitted_to_relay', 'FlashbotsMEVShare', txHash]
-                                      );
-                                  }
-                              } catch (dbError) {
-                                  console.error("Database error after Flashbots submission:", dbError);
-                              }
-                          }
-                          return reply.send({ jsonrpc, id, result: txHash });
-                      } catch (flashbotsError) {
-                          console.error("Both standard provider and Flashbots failed:", flashbotsError);
-                          return reply.send({ 
-                              jsonrpc, 
-                              id, 
-                              error: { 
-                                  code: -32000, 
-                                  message: `Transaction failed with both providers: ${providerError.message}` 
-                              } 
-                          });
-                      }
-                  } else {
-                      // If Flashbots is not available, return the standard provider error
-                      return reply.send({ 
-                          jsonrpc, 
-                          id, 
-                          error: { 
-                              code: -32000, 
-                              message: `Transaction failed: ${providerError.message}` 
-                          } 
-                      });
-                  }
+                  return reply.send({ 
+                      jsonrpc, 
+                      id, 
+                      error: { 
+                          code: -32000, 
+                          message: `Transaction failed: ${providerError.message}` 
+                      } 
+                  });
               }
             } catch (error) {
               console.error("Error in eth_sendRawTransaction:", error);

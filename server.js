@@ -7,6 +7,8 @@ import rpcRoutes from './routes/rpc.js';
 import userRoutes from './routes/users.js';
 import rewardsRoutes from './routes/rewards.js';
 import stakingRoutes from './routes/staking.js';
+import { spawn } from 'child_process';
+import cron from 'node-cron';
 
 dotenv.config();
 
@@ -77,3 +79,22 @@ const start = async () => {
 };
 
 start();
+
+// Schedule the transaction updater to run every 10 seconds instead of 5 minutes
+cron.schedule('*/10 * * * * *', () => {
+  console.log('Running transaction status update job...');
+  const worker = spawn('node', ['workers/transactionUpdater.js'], {
+    stdio: 'inherit',
+    detached: true
+  });
+  
+  worker.on('error', (err) => {
+    console.error('Failed to start transaction updater worker:', err);
+  });
+  
+  worker.on('exit', (code, signal) => {
+    if (code !== 0) {
+      console.log(`Transaction updater worker exited with code ${code} and signal ${signal}`);
+    }
+  });
+});

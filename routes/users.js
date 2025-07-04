@@ -130,9 +130,9 @@ export default async function userRoutes(fastify, options) {
         const decimals = await cbkTokenContract.decimals();
         const cbkBalance = await cbkTokenContract.balanceOf(profileData.wallet_address);
 
-        // Convert to string using proper decimals 
+        // Convert to string using proper decimals - IMPORTANT: Convert BigInt to string to avoid serialization errors
         profileData.cbk_balance = cbkBalance.toString();
-        profileData.cbk_decimals = decimals;
+        profileData.cbk_decimals = Number(decimals); // Convert to JavaScript number
         
         request.log.info({ cbk_balance: profileData.cbk_balance, decimals: profileData.cbk_decimals }, '✅ PROFILE: CBK balance fetched successfully.');
       } catch (chainError) {
